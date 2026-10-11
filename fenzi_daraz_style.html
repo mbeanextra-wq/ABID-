@@ -1,0 +1,94 @@
+import os
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+import edge_tts
+
+BOT_TOKEN = "8828586643:AAG0X8enKhLSB-buc0lBvjx1j0yTG2Ypk28"
+
+logging.basicConfig(level=logging.INFO)
+
+user_texts = {}
+
+VOICES = {
+    "bn_male": {"name": "bn-BD-PradeepNeural", "label": "🇧🇩 বাংলা (পুরুষ - প্রদীপ)"},
+    "bn_female": {"name": "bn-BD-NabanitaNeural", "label": "🇧🇩 বাংলা (নারী - নবনীতা)"},
+    "en_female": {"name": "en-US-AriaNeural", "label": "🇺🇸 English (Female - Aria)"},
+    "en_male": {"name": "en-US-GuyNeural", "label": "🇺🇸 English (Male - Guy)"}
+}
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("যেকোনো বাংলা বা ইংরেজি টেক্সট পাঠাও! 🎙️")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    text = update.message.text
+    
+    if not text:
+        return
+        
+    user_texts[user_id] = text
+    
+    keyboard = [
+        [
+            InlineKeyboardButton(VOICES["bn_male"]["label"], callback_data="bn_male"),
+            InlineKeyboardButton(VOICES["bn_female"]["label"], callback_data="bn_female")
+        ],
+        [
+            InlineKeyboardButton(VOICES["en_male"]["label"], callback_data="en_male"),
+            InlineKeyboardButton(VOICES["en_female"]["label"], callback_data="en_female")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("কোন ভয়েসে অডিও বানাতে চাও? সিলেক্ট করো:", reply_markup=reply_markup)
+
+async def handle_voice_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    selected_voice_key = query.data
+    
+    if user_id not in user_texts:
+        await query.edit_message_text("❌ আগের টেক্সটটি পাওয়া যায়নি। আবার টেক্সট পাঠাও।")
+        return
+        
+    text = user_texts[user_id]
+    voice_info = VOICES.get(selected_voice_key)
+    
+    await query.edit_message_text(f"⏳ **{voice_info['label']}** দিয়ে অডিও তৈরি হচ্ছে...")
+    
+    output_file = f"voice_{user_id}.mp3"
+    
+    try:
+        communicate = edge_tts.Communicate(text, voice_info["name"])
+        await communicate.save(output_file)
+        
+        with open(output_file, "rb") as audio:
+            await context.bot.send_audio(
+                chat_id=query.message.chat_id, 
+                audio=audio, 
+                caption=f"✅ ভয়েস: {voice_info['label']}"
+            )
+            
+    except Exception as e:
+        await context.bot.send_message(chat_id=query.message.chat_id, text=f"ত্রুটি: {str(e)}")
+        
+    finally:
+        if os.path.exists(output_file):
+            os.remove(output_file)
+        if user_id in user_texts:
+            del user_texts[user_id]
+
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CallbackQueryHandler(handle_voice_selection))
+    
+    print("বট সফলভাবে চালু হয়েছে...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
